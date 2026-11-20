@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Interaktive 3D-Sternenkarte der 500 GitHub-Repos mit den meisten Sternen.">
+<title>Die Repo-Galaxie</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Manrope:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+body { margin: 0; }
+[hidden] { display: none !important; }
+/* Layout: full-bleed canvas star map; floating glass instruments pinned to the corners, bottom sheet on phones */
+:root {
+  --void: #04050d;
+  --panel: rgba(12, 14, 34, 0.72);
+  --fg: #eceaf7;
+  --muted: #9093b8;
+  --line: rgba(170, 176, 255, 0.16);
+  --accent: #ffcf7a;
+  --f-display: "Unbounded", "Arial Black", system-ui, sans-serif;
+  --f-body: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --pad-l: max(16px, env(safe-area-inset-left, 0px));
+  --pad-r: max(16px, env(safe-area-inset-right, 0px));
+  --pad-t: calc(env(safe-area-inset-top, 0px) + 16px);
+  --pad-b: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--void); color: var(--fg); font-family: var(--f-body);
+  overflow: hidden; -webkit-font-smoothing: antialiased;
+}
+canvas#sky { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+canvas#sky.dragging { cursor: grabbing; }
+canvas#sky.pointing { cursor: pointer; }
+
+.glass {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
+}
+
+/* Title block */
+.masthead { position: fixed; top: var(--pad-t); left: var(--pad-l); max-width: min(440px, calc(100vw - 32px)); pointer-events: none; display: grid; gap: 10px; }
+.eyebrow { font-family: var(--f-mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+h1 { margin: 0; font-family: var(--f-display); font-weight: 900; font-size: clamp(30px, 5.4vw, 58px); line-height: .95; letter-spacing: -0.02em; text-wrap: balance;
+  background: linear-gradient(180deg, #fff 30%, #b9b6e8); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.stats { display: flex; flex-wrap: wrap; gap: 6px 18px; font-family: var(--f-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stats b { color: var(--fg); font-weight: 500; }
+.hint { font-size: 12.5px; color: var(--muted); line-height: 1.5; max-width: 34ch; }
+
+/* Search + actions */
+.tools { position: fixed; top: var(--pad-t); right: var(--pad-r); width: min(300px, calc(100vw - 32px)); display: grid; gap: 8px; }
+.search { position: relative; }
+.search input {
+  width: 100%; box-sizing: border-box; padding: 11px 14px 11px 38px; font: 500 14px var(--f-body); color: var(--fg);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; outline: none;
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+.search input::placeholder { color: var(--muted); }
+.search input:focus-visible { border-color: var(--accent); }
+.search svg { z-index: 1; position: absolute; left: 13px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; stroke: var(--muted); fill: none; stroke-width: 2; }
+.results { list-style: none; margin: 6px 0 0; padding: 6px; display: grid; gap: 2px; }
+.results[hidden] { display: none; }
+.results button {
+  width: 100%; text-align: left; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--fg); font: 500 13px var(--f-body); cursor: pointer;
+}
+.results button:hover, .results button:focus-visible { background: rgba(170,176,255,.12); outline: none; }
+.results .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.results .s { font-family: var(--f-mono); font-size: 11px; color: var(--muted); }
+.row { display: flex; gap: 8px; }
+.btn {
+  flex: 1; padding: 10px 12px; font: 600 12.5px var(--f-body); color: var(--fg); cursor: pointer;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); transition: border-color .2s, background .2s;
+}
+.btn:hover { border-color: rgba(255,207,122,.5); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn.primary { background: linear-gradient(180deg, rgba(255,207,122,.22), rgba(255,207,122,.08)); border-color: rgba(255,207,122,.45); }
+
+/* Legend */
+.legend { position: fixed; left: var(--pad-l); bottom: var(--pad-b); max-width: min(560px, calc(100vw - 32px)); padding: 12px; display: grid; gap: 10px; }
+.legend-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.legend-head span { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.legend-head button { border: 0; background: none; color: var(--accent); font: 500 12px var(--f-body); cursor: pointer; padding: 0; }
+.legend-head button[hidden] { display: none; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.chip {
+  display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 8px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: rgba(255,255,255,.03); color: var(--fg); font: 500 12px var(--f-body); transition: opacity .2s, border-color .2s, background .2s;
+}
+.chip i { width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 8px currentColor; }
+.chip em { font-style: normal; font-family: var(--f-mono); font-size: 10.5px; color: var(--muted); }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chips.filtering .chip:not(.on) { opacity: .38; }
+.chip.on { border-color: rgba(255,255,255,.4); background: rgba(255,255,255,.08); }
+.legend-note { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+
+/* Detail card */
+.card { position: fixed; right: var(--pad-r); bottom: var(--pad-b); width: min(360px, calc(100vw - 32px)); padding: 18px; display: grid; gap: 12px; box-sizing: border-box; }
+.card[hidden] { display: none; }
+.card-top { display: flex; align-items: flex-start; gap: 12px; }
+.card-top > div { flex: 1; min-width: 0; }
+.rank { font-family: var(--f-mono); font-size: 11px; color: var(--accent); letter-spacing: .08em; }
+.card h2 { margin: 4px 0 0; font-family: var(--f-display); font-weight: 700; font-size: 18px; line-height: 1.2; overflow-wrap: anywhere; }
+.card h2 small { display: block; font-family: var(--f-body); font-weight: 500; font-size: 12.5px; color: var(--muted); margin-bottom: 2px; }
+.close { flex: none; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; }
+.close:hover { color: var(--fg); }
+.close:focus-visible { outline: 2px solid var(--accent); }
+.desc { margin: 0; font-size: 13.5px; line-height: 1.55; color: #cfcde6; }
+.facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.facts div { padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,.04); }
+.facts dt { font-family: var(--f-mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.facts dd { margin: 3px 0 0; font-family: var(--f-mono); font-size: 14px; font-variant-numeric: tabular-nums; }
+.topics { display: flex; flex-wrap: wrap; gap: 5px; }
+.topics span { font-family: var(--f-mono); font-size: 10.5px; padding: 3px 8px; border-radius: 6px; background: rgba(170,176,255,.1); color: #c4c6f0; }
+.gh { display: inline-flex; justify-content: center; align-items: center; gap: 8px; padding: 10px; border-radius: 10px; text-decoration: none; color: #1b1405; background: var(--accent); font: 700 13px var(--f-body); }
+.gh:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+/* Hover label */
+.tip { position: fixed; pointer-events: none; padding: 7px 10px; border-radius: 9px; font: 500 12px var(--f-body); background: rgba(8,9,24,.9); border: 1px solid var(--line); white-space: nowrap; transform: translate(14px, -50%); }
+.tip[hidden] { display: none; }
+.tip span { font-family: var(--f-mono); color: var(--accent); margin-left: 8px; font-size: 11px; }
+
+.loading { position: fixed; inset: 0; display: grid; place-items: center; font-family: var(--f-mono); font-size: 12px; color: var(--muted); letter-spacing: .12em; text-transform: uppercase; pointer-events: none; }
+.loading[hidden] { display: none; }
+
+@media (max-width: 760px) {
+  .masthead { max-width: calc(100vw - 32px); gap: 6px; }
+  .hint { display: none; }
+  .tools { top: auto; bottom: calc(var(--pad-b) + 4px); right: var(--pad-r); left: var(--pad-l); width: auto; }
+  .tools .search { order: 2; }
+  .tools .results { position: absolute; bottom: calc(100% + 6px); left: 0; right: 0; margin: 0; }
+  .legend { bottom: auto; top: calc(var(--pad-t) + 128px); right: var(--pad-r); padding: 8px; max-width: none; grid-template-columns: minmax(0, 1fr); }
+  .legend-note { display: none; }
+  .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { flex: none; }
+  .card { left: var(--pad-l); right: var(--pad-r); width: auto; bottom: var(--pad-b); max-height: 60vh; overflow-y: auto; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+</head>
+<body>
+<canvas id="sky" aria-label="Interaktive Sternenkarte der 500 GitHub-Repositories mit den meisten Sternen"></canvas>
+<div class="loading" id="loading">Galaxie wird geladen …</div>
+
+<header class="masthead">
+  <div class="eyebrow">GitHub · Top 500 nach Sternen · Stand <span id="updated">20.11.2026</span></div>
+  <h1>Die Repo-Galaxie</h1>
+  <div class="stats" id="stats"><span><b>500</b> Repos</span></div>
+  <p class="hint">Jeder Lichtpunkt ist ein echtes Open-Source-Projekt. Ziehen zum Drehen, Scrollen oder Zwei-Finger-Zoom zum Hineinfliegen, Stern anklicken für Details.</p>
+</header>
+
+<div class="tools">
+  <div class="search">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+    <input id="q" type="search" placeholder="Repo suchen, z. B. react" autocomplete="off" aria-label="Repo suchen">
+    <ul class="results glass" id="results" hidden></ul>
+  </div>
+  <div class="row">
+    <button class="btn primary" id="random">Zufälliger Stern</button>
+    <button class="btn" id="reset">Ganze Galaxie</button>
+  </div>
+</div>
+
+<section class="legend glass" aria-label="Sprachen">
+  <div class="legend-head"><span>Spiralarme nach Sprache</span><button id="clear" hidden>Alle zeigen</button></div>
+  <div class="chips" id="chips"></div>
+  <div class="legend-note">Größe und Helligkeit zeigen die Sterne auf GitHub. Alte Projekte liegen nahe am Kern, neue weit draußen.</div>
+</section>
+
+<aside class="card glass" id="card" hidden aria-live="polite">
+  <div class="card-top">
+    <div>
+      <div class="rank" id="c-rank"></div>
+      <h2 id="c-name"></h2>
+    </div>
+    <button class="close" id="c-close" aria-label="Details schließen">×</button>
+  </div>
+  <p class="desc" id="c-desc"></p>
+  <dl class="facts">
+    <div><dt>Sterne</dt><dd id="c-stars"></dd></div>
+    <div><dt>Forks</dt><dd id="c-forks"></dd></div>
+    <div><dt>Seit</dt><dd id="c-year"></dd></div>
+  </dl>
+  <div class="topics" id="c-topics"></div>
+  <a class="gh" id="c-link" href="https://github.com" target="_blank" rel="noopener">Auf GitHub ansehen ↗</a>
+</aside>
+
+<div class="tip" id="tip" hidden></div>
+
+<script>
+(() => {
+  const LANG_COLORS = {
+    "Python": "#4f8fd6", "TypeScript": "#3d8bfd", "JavaScript": "#f1e05a", "Rust": "#dea584", "Go": "#00ADD8",
+    "Shell": "#89e051", "C++": "#f34b7d", "Java": "#d08a3a", "Jupyter Notebook": "#ff7a2f", "C": "#b8c2d6",
+    "HTML": "#e34c26", "Markdown": "#6f9bff", "Dart": "#00B4AB", "C#": "#3fbf3f", "Kotlin": "#A97BFF",
+    "Swift": "#F05138", "Vue": "#41b883", "Ruby": "#e0475a", "PHP": "#8892d6", "CSS": "#a86fe0", "Other": "#d9d4ff"
+  };
+  const OTHER_LABEL = "Weitere";
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const de = n => n.toLocaleString("de-DE");
+  const compact = n => n >= 1e6 ? (n / 1e6).toLocaleString("de-DE", { maximumFractionDigits: 1 }) + " Mio." : n >= 1e3 ? Math.round(n / 1e3) + " Tsd." : String(n);
+
+  // seeded RNG so the galaxy is the same for everyone
+  let seed = 1337;
+  const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+
+  const cv = document.getElementById("sky");
+  const ctx = cv.getContext("2d");
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = cv.clientWidth; H = cv.clientHeight;
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  addEventListener("resize", resize); resize();
+
+  // glow sprites per colour
+  const sprites = {};
+  function sprite(color) {
+    if (sprites[color]) return sprites[color];
+    const s = 64, c = document.createElement("canvas"); c.width = c.height = s;
+    const g = c.getContext("2d"), gr = g.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+    gr.addColorStop(0, "rgba(255,255,255,1)");
+    gr.addColorStop(0.12, "rgba(255,255,255,.95)");
+    gr.addColorStop(0.22, color);
+    gr.addColorStop(0.5, color + "44");
+    gr.addColorStop(1, color + "00");
+    g.fillStyle = gr; g.fillRect(0, 0, s, s);
+    return sprites[color] = c;
+  }
+
+  // background dust
+  const dust = Array.from({ length: 1400 }, () => ({ x: rnd(), y: rnd(), r: rnd() * 1.1 + 0.2, a: rnd() * 0.5 + 0.1, p: rnd() * 6.28 }));
+
+  // camera
+  const cam = { yaw: 0.6, pitch: 0.95, dist: 1250, tYaw: 0.6, tPitch: 0.95, tDist: 1250, c: [0,0,0], t: [0,0,0] };
+  const FOCAL = () => Math.min(W, H) * 1.05;
+  let stars = [], arms = [], filter = null, selected = null, hovered = null, lastInteract = performance.now();
+  let projected = [];
+
+  fetch("data.json").then(r => r.json()).then(build).catch(() => {
+    document.getElementById("loading").textContent = "Daten konnten nicht geladen werden. Seite neu laden.";
+  });
+
+  function build(raw) {
+    document.getElementById("loading").hidden = true;
+    const data = Array.isArray(raw) ? raw : raw.repos;
+    if (raw.updated) document.getElementById("updated").textContent = new Date(raw.updated + "T12:00:00Z").toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+    const counts = {};
+    data.forEach(d => counts[d.l] = (counts[d.l] || 0) + 1);
+    const named = Object.entries(counts).filter(([l]) => l !== "Other").sort((a, b) => b[1] - a[1]);
+    const armLangs = named.slice(0, 11).map(([l]) => l);
+    const armOf = l => armLangs.includes(l) ? l : OTHER_LABEL;
+    const armCounts = {};
+    data.forEach(d => { const a = armOf(d.l); armCounts[a] = (armCounts[a] || 0) + 1; });
+    arms = [...armLangs, OTHER_LABEL].map((name, i, all) => ({ name, i, n: armCounts[name] || 0, color: LANG_COLORS[name] || LANG_COLORS.Other, base: i / all.length * Math.PI * 2 }));
+    const armMap = Object.fromEntries(arms.map(a => [a.name, a]));
+
+    const years = data.map(d => +d.c), y0 = Math.min(...years), y1 = Math.max(...years);
+    const lmin = Math.log(Math.min(...data.map(d => d.s))), lmax = Math.log(Math.max(...data.map(d => d.s)));
+    const totalStars = data.reduce((s, d) => s + d.s, 0);
+
+    stars = data.map((d, idx) => {
+      const arm = armMap[armOf(d.l)];
+      const t = Math.min(1, Math.max(0, (+d.c - y0 + rnd()) / (y1 - y0 + 1)));
+      const ang = arm.base + t * 2.3 + gauss() * 0.07;
+      const rad = 70 + t * 620 + gauss() * 18;
+      const spread = 16 + t * 34;
+      const m = Math.pow((Math.log(d.s) - lmin) / (lmax - lmin), 1.4);
+      return {
+        ...d, rank: idx + 1, arm: arm.name, color: LANG_COLORS[d.l] || arm.color,
+        x: Math.cos(ang) * rad + gauss() * spread, z: Math.sin(ang) * rad + gauss() * spread, y: gauss() * (26 * (1 - t) + 7),
+        size: 5 + m * 30, mag: m, tw: rnd() * 6.28
+      };
+    });
+
+    document.getElementById("stats").innerHTML =
+      `<span><b>${data.length}</b> Repos</span><span><b>${compact(totalStars)}</b> Sterne</span><span><b>${Object.keys(counts).length}</b> Sprachen</span><span><b>${y0}–${y1}</b></span>`;
+
+    const chips = document.getElementById("chips");
+    arms.forEach(a => {
+      const b = document.createElement("button");
+      b.className = "chip"; b.dataset.arm = a.name; b.setAttribute("aria-pressed", "false");
+      b.innerHTML = `<i style="background:${a.color};color:${a.color}"></i>${a.name === "Jupyter Notebook" ? "Jupyter" : a.name}<em>${a.n}</em>`;
+      b.onclick = () => setFilter(filter === a.name ? null : a.name);
+      chips.appendChild(b);
+    });
+  }
+
+  function setFilter(name) {
+    filter = name;
+    document.querySelectorAll(".chip").forEach(c => { const on = c.dataset.arm === name; c.classList.toggle("on", on); c.setAttribute("aria-pressed", on); });
+    document.getElementById("chips").classList.toggle("filtering", !!name);
+    document.getElementById("clear").hidden = !name;
+    lastInteract = performance.now();
+  }
+  document.getElementById("clear").onclick = () => setFilter(null);
+
+  // projection
+  function project(x, y, z) {
+    x -= cam.c[0]; y -= cam.c[1]; z -= cam.c[2];
+    const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+    const x1 = x * cy - z * sy, z1 = x * sy + z * cy;
+    const y2 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+    const depth = z2 + cam.dist;
+    if (depth < 30) return null;
+    const s = FOCAL() / depth;
+    return { x: W / 2 + x1 * s, y: H / 2 + y2 * s, s, depth };
+  }
+
+  function frame(now) {
+    const idle = now - lastInteract > 3500;
+    if (idle && !reduceMotion && !dragging) cam.tYaw += 0.0007;
+    const k = 0.08;
+    cam.yaw += (cam.tYaw - cam.yaw) * k;
+    cam.pitch += (cam.tPitch - cam.pitch) * k;
+    cam.dist += (cam.tDist - cam.dist) * k;
+    for (let i = 0; i < 3; i++) cam.c[i] += (cam.t[i] - cam.c[i]) * 0.07;
+
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "#04050d"; ctx.fillRect(0, 0, W, H);
+
+    // nebula wash
+    const neb = ctx.createRadialGradient(W * .72, H * .3, 0, W * .72, H * .3, Math.max(W, H) * .7);
+    neb.addColorStop(0, "rgba(70,50,140,.18)"); neb.addColorStop(1, "rgba(4,5,13,0)");
+    ctx.fillStyle = neb; ctx.fillRect(0, 0, W, H);
+
+    // dust with slight parallax
+    const px = Math.sin(cam.yaw) * 30;
+    for (const d of dust) {
+      const a = d.a * (reduceMotion ? 1 : 0.7 + 0.3 * Math.sin(now / 900 + d.p));
+      ctx.fillStyle = `rgba(210,215,255,${a})`;
+      ctx.fillRect(((d.x * W + px) % W + W) % W, d.y * H, d.r, d.r);
+    }
+
+    ctx.globalCompositeOperation = "lighter";
+    // galactic core
+    const core = project(0, 0, 0);
+    if (core) {
+      const r = 260 * core.s;
+      const g = ctx.createRadialGradient(core.x, core.y, 0, core.x, core.y, r);
+      g.addColorStop(0, "rgba(255,226,170,.55)"); g.addColorStop(.25, "rgba(255,190,120,.18)"); g.addColorStop(.6, "rgba(120,90,200,.07)"); g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(core.x, core.y, r, 0, 7); ctx.fill();
+    }
+
+    // stars
+    projected = [];
+    for (const st of stars) {
+      const p = project(st.x, st.y, st.z);
+      if (!p) continue;
+      p.st = st; projected.push(p);
+    }
+    projected.sort((a, b) => b.depth - a.depth);
+    const labels = [];
+    for (const p of projected) {
+      const st = p.st;
+      const dim = filter && st.arm !== filter;
+      const tw = reduceMotion ? 1 : 0.85 + 0.15 * Math.sin(now / 600 + st.tw);
+      const r = Math.max(1.5, st.size * p.s * (st === hovered || st === selected ? 1.35 : 1));
+      p.r = r;
+      ctx.globalAlpha = (dim ? 0.08 : 0.55 + 0.45 * st.mag) * tw;
+      ctx.drawImage(sprite(st.color), p.x - r, p.y - r, r * 2, r * 2);
+      if (!dim && (st.mag > 0.62 || r > 15 || st === selected)) labels.push(p);
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+
+    // labels
+    ctx.font = "500 11px 'IBM Plex Mono', ui-monospace, monospace";
+    ctx.textBaseline = "middle";
+    const placed = [];
+    labels.sort((a, b) => (b.st === selected) - (a.st === selected) || b.st.s - a.st.s);
+    for (const p of labels.slice(0, 40)) {
+      const name = p.st.n.split("/")[1];
+      const w = ctx.measureText(name).width, lx = p.x + p.r * 0.35 + 6, ly = p.y;
+      if (lx < 0 || lx + w > W || ly < 0 || ly > H) continue;
+      if (placed.some(q => lx < q.x + q.w + 6 && lx + w + 6 > q.x && Math.abs(ly - q.y) < 14)) continue;
+      placed.push({ x: lx, y: ly, w });
+      ctx.fillStyle = p.st === selected ? "#ffcf7a" : "rgba(236,234,247,.72)";
+      ctx.fillText(name, lx, ly);
+    }
+
+    // selection ring
+    if (selected) {
+      const p = project(selected.x, selected.y, selected.z);
+      if (p) {
+        const pulse = reduceMotion ? 0 : (now / 1400) % 1;
+        const base = Math.max(10, selected.size * p.s * 0.55);
+        ctx.strokeStyle = `rgba(255,207,122,${0.9 - pulse * 0.9})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(p.x, p.y, base + pulse * 24, 0, 7); ctx.stroke();
+        ctx.strokeStyle = "rgba(255,207,122,.9)";
+        ctx.beginPath(); ctx.arc(p.x, p.y, base, 0, 7); ctx.stroke();
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // picking
+  function pick(x, y) {
+    let best = null, bd = Infinity;
+    for (let i = projected.length - 1; i >= 0; i--) {
+      const p = projected[i];
+      if (filter && p.st.arm !== filter) continue;
+      const d = Math.hypot(p.x - x, p.y - y), hit = Math.max(9, p.r * 0.45);
+      if (d < hit && d < bd) { bd = d; best = p.st; }
+    }
+    return best;
+  }
+
+  const tip = document.getElementById("tip");
+  function showTip(st, x, y) {
+    if (!st) { tip.hidden = true; return; }
+    tip.hidden = false;
+    tip.innerHTML = `${st.n}<span>★ ${compact(st.s)}</span>`;
+    const w = tip.offsetWidth;
+    tip.style.left = (x + w + 30 > W ? x - w - 28 : x) + "px";
+    tip.style.top = y + "px";
+  }
+
+  // pointer controls
+  const pointers = new Map();
+  let dragging = false, moved = 0, pinch0 = 0, dist0 = 0;
+  cv.addEventListener("pointerdown", e => {
+    cv.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    moved = 0; dragging = true; cv.classList.add("dragging"); lastInteract = performance.now();
+    if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); dist0 = cam.tDist; }
+  });
+  cv.addEventListener("pointermove", e => {
+    if (!pointers.has(e.pointerId)) {
+      if (e.pointerType === "mouse") { hovered = pick(e.clientX, e.clientY); cv.classList.toggle("pointing", !!hovered); showTip(hovered, e.clientX, e.clientY); }
+      return;
+    }
+    const prev = pointers.get(e.pointerId), dx = e.clientX - prev.x, dy = e.clientY - prev.y;
+    prev.x = e.clientX; prev.y = e.clientY; moved += Math.abs(dx) + Math.abs(dy);
+    lastInteract = performance.now();
+    if (pointers.size === 1) {
+      cam.tYaw += dx * 0.005;
+      cam.tPitch = Math.min(1.5, Math.max(0.08, cam.tPitch + dy * 0.004));
+      tip.hidden = true;
+    } else if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinch0) cam.tDist = clampDist(dist0 * pinch0 / d);
+    }
+  });
+  const end = e => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.delete(e.pointerId);
+    if (pointers.size === 0) {
+      dragging = false; cv.classList.remove("dragging");
+      if (moved < 6 && e.type === "pointerup") { const st = pick(e.clientX, e.clientY); st ? select(st) : null; }
+    }
+    if (pointers.size < 2) pinch0 = 0;
+  };
+  cv.addEventListener("pointerup", end);
+  cv.addEventListener("pointercancel", end);
+  cv.addEventListener("pointerleave", e => { if (e.pointerType === "mouse") { hovered = null; tip.hidden = true; } });
+  cv.addEventListener("wheel", e => { e.preventDefault(); cam.tDist = clampDist(cam.tDist * Math.exp(e.deltaY * 0.0012)); lastInteract = performance.now(); }, { passive: false });
+  const clampDist = d => Math.min(2600, Math.max(90, d));
+
+  // selection + card
+  const $ = id => document.getElementById(id);
+  function select(st) {
+    selected = st;
+    cam.t = [st.x, st.y, st.z];
+    cam.tDist = Math.min(cam.tDist, 420);
+    lastInteract = performance.now();
+    const [owner, name] = st.n.split("/");
+    $("c-rank").textContent = `Platz ${st.rank} von ${stars.length} · ${st.l === "Other" ? "ohne Hauptsprache" : st.l}`;
+    $("c-name").innerHTML = `<small></small>`; $("c-name").firstChild.textContent = owner + " /"; $("c-name").append(name);
+    $("c-desc").textContent = st.d || "Keine Beschreibung hinterlegt.";
+    $("c-stars").textContent = de(st.s);
+    $("c-forks").textContent = compact(st.f);
+    $("c-year").textContent = st.c;
+    const tp = $("c-topics"); tp.innerHTML = "";
+    st.t.forEach(t => { const s = document.createElement("span"); s.textContent = "#" + t; tp.appendChild(s); });
+    tp.hidden = !st.t.length;
+    $("c-link").href = "https://github.com/" + st.n;
+    $("card").hidden = false;
+  }
+  function deselect() { selected = null; $("card").hidden = true; }
+  $("c-close").onclick = deselect;
+  $("random").onclick = () => {
+    const pool = stars.filter(s => !filter || s.arm === filter);
+    if (pool.length) select(pool[Math.floor(Math.random() * pool.length)]);
+  };
+  $("reset").onclick = () => { deselect(); cam.t = [0, 0, 0]; cam.tDist = 1250; cam.tPitch = 0.95; setFilter(null); };
+  addEventListener("keydown", e => { if (e.key === "Escape") { deselect(); $("results").hidden = true; } });
+
+  // search
+  const q = $("q"), results = $("results");
+  q.addEventListener("input", () => {
+    const v = q.value.trim().toLowerCase();
+    results.innerHTML = "";
+    if (!v) { results.hidden = true; return; }
+    const hits = stars.filter(s => s.n.toLowerCase().includes(v) || s.d.toLowerCase().includes(v)).sort((a, b) =>
+      (b.n.toLowerCase().split("/")[1].startsWith(v)) - (a.n.toLowerCase().split("/")[1].startsWith(v)) || b.s - a.s).slice(0, 7);
+    if (!hits.length) { results.innerHTML = `<li style="padding:8px 10px;color:var(--muted);font-size:13px">Kein Repo gefunden. Hier sind nur die Top 500.</li>`; results.hidden = false; return; }
+    hits.forEach(h => {
+      const li = document.createElement("li"), b = document.createElement("button");
+      b.innerHTML = `<i style="width:8px;height:8px;border-radius:50%;flex:none;background:${h.color}"></i><span class="n"></span><span class="s">★ ${compact(h.s)}</span>`;
+      b.querySelector(".n").textContent = h.n;
+      b.onclick = () => { select(h); results.hidden = true; q.blur(); };
+      li.appendChild(b); results.appendChild(li);
+    });
+    results.hidden = false;
+  });
+  q.addEventListener("keydown", e => { if (e.key === "Enter") { const b = results.querySelector("button"); b && b.click(); } });
+  document.addEventListener("pointerdown", e => { if (!e.target.closest(".search")) results.hidden = true; });
+})();
+</script>
+</body>
+</html>
